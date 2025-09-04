@@ -30,6 +30,8 @@ class StakeItem {
   final DateTime? closeDate;
   final double planPercent;
   final double earnAmount;
+  final String planName;
+  final String platform;
 
   StakeItem({
     required this.currency,
@@ -38,6 +40,8 @@ class StakeItem {
     required this.closeDate,
     required this.planPercent,
     required this.earnAmount,
+    required this.planName,
+    required this.platform,
   });
 }
 
@@ -53,7 +57,6 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
   bool fileLoaded = false;
 
   Future<void> pickFile() async {
-    debugPrint('Starting file picking...');
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['csv'],
@@ -65,8 +68,6 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
       final bytes = file.bytes!;
       final ext = file.extension?.toLowerCase() ?? '';
 
-      debugPrint('File picked with extension: $ext');
-
       if (ext == 'csv') {
         readCsv(bytes);
       }
@@ -74,143 +75,100 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
       setState(() {
         fileLoaded = true;
       });
-    } else {
-      debugPrint('No file selected.');
     }
   }
 
   void readCsv(Uint8List bytes) {
-    debugPrint('Starting CSV parsing...');
     final csvString = String.fromCharCodes(bytes);
     final rows = CsvToListConverter().convert(csvString);
 
     List<StakeItem> temp = [];
 
-    for (int i = 1; i < rows.length; i++) { // пропускаємо заголовки
+    for (int i = 1; i < rows.length; i++) {
       final row = rows[i];
       if (row.isEmpty) continue;
 
-      try {
-        final currency = row.length > 1 ? row[1].toString() : '';
-        final openDate = row.length > 6 ? _parseDate(row[6]) : null;
+      final currency = row.length > 1 ? row[1].toString() : '';
+      final openDate = row.length > 6 ? _parseDate(row[6]) : null;
+      final planPeriodMinutes = row.length > 4 ? _toDouble(row[4]) : 0.0;
+      final planName = _planName(planPeriodMinutes);
 
-        // <-- ВАЖЛИВО: planPeriod тут у хвилинах (43200 -> 30 днів)
-        final planPeriodMinutes = row.length > 4 ? _toDouble(row[4]) : 0.0;
-
-        DateTime? closeDate;
-        if (openDate != null && planPeriodMinutes > 0) {
-          closeDate = openDate.add(Duration(minutes: planPeriodMinutes.toInt()));
-        }
-
-        final openAmount = row.length > 5 ? _toDouble(row[5]) : 0.0;
-        final planPercent = row.length > 3 ? _toDouble(row[3]) : 0.0;
-        final earnAmount = row.length > 9 ? _toDouble(row[9]) : 0.0;
-
-        temp.add(StakeItem(
-          currency: currency,
-          openAmount: openAmount,
-          openDate: openDate,
-          closeDate: closeDate,
-          planPercent: planPercent,
-          earnAmount: earnAmount,
-        ));
-      } catch (e) {
-        debugPrint('Skipping row $i due to error: $e');
-        continue;
+      DateTime? closeDate;
+      if (openDate != null && planPeriodMinutes > 0) {
+        closeDate = openDate.add(Duration(minutes: planPeriodMinutes.toInt()));
       }
+
+      final openAmount = row.length > 5 ? _toDouble(row[5]) : 0.0;
+      final planPercent = row.length > 3 ? _toDouble(row[3]) : 0.0;
+      final earnAmount = row.length > 9 ? _toDouble(row[9]) : 0.0;
+
+      temp.add(StakeItem(
+        currency: currency,
+        openAmount: openAmount,
+        openDate: openDate,
+        closeDate: closeDate,
+        planPercent: planPercent,
+        earnAmount: earnAmount,
+        planName: planName,
+        platform: 'WhiteBIT',
+      ));
     }
 
     setState(() {
       stakingData = temp;
     });
-    debugPrint('CSV parsing completed. Parsed ${temp.length} items.');
   }
 
   double _toDouble(dynamic value) {
-    if (value == null) {
-      debugPrint('_toDouble: null value, returning 0.0');
-      return 0.0;
-    }
-    if (value is double) {
-      debugPrint('_toDouble: double value $value');
-      return value;
-    }
-    if (value is int) {
-      debugPrint('_toDouble: int value $value');
-      return value.toDouble();
-    }
-    if (value is num) {
-      debugPrint('_toDouble: num value $value');
-      return value.toDouble();
-    }
-    if (value is String) {
-      final parsed = double.tryParse(value) ?? 0.0;
-      debugPrint('_toDouble: parsed string "$value" to $parsed');
-      return parsed;
-    }
-    debugPrint('_toDouble: unknown type, returning 0.0');
+    if (value == null) return 0.0;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
     return 0.0;
   }
 
   DateTime? _parseDate(dynamic value) {
-    if (value == null || value.toString().isEmpty) {
-      debugPrint('_parseDate: null or empty value, returning null');
-      return null;
-    }
-
-    if (value is DateTime) {
-      debugPrint('_parseDate: DateTime value $value');
-      return value;
-    }
-
+    if (value == null) return null;
+    if (value is DateTime) return value;
     if (value is String) {
-      // Заміна "UTC" на "T" і додавання "Z" наприкінці
       String formatted = value.replaceAll('UTC', 'T').trim();
-      if (!formatted.endsWith('Z')) {
-        formatted += 'Z';
-      }
-      final parsed = DateTime.tryParse(formatted);
-      if (parsed != null) {
-        debugPrint('_parseDate: parsed string "$value" to $parsed');
-        return parsed;
-      }
-      debugPrint('_parseDate: failed to parse string "$value", returning null');
-      return null;
+      if (!formatted.endsWith('Z')) formatted += 'Z';
+      return DateTime.tryParse(formatted);
     }
-
     if (value is num) {
-      // Іноді дата може бути у вигляді Excel-числа (дні з 1899-12-30)
       final excelEpoch = DateTime(1899, 12, 30);
-      final days = value.toDouble();
-      final date = excelEpoch.add(Duration(days: days.floor()));
-      debugPrint('_parseDate: parsed numeric excel date $value to $date');
-      return date;
+      return excelEpoch.add(Duration(days: value.floor()));
     }
-
-    debugPrint('_parseDate: unknown type, returning null');
     return null;
   }
 
+  String _planName(double minutes) {
+    final days = minutes / 1440; // 1 день = 1440 хв
+    if (days >= 360) return 'Year';
+    if (days >= 180) return 'Half Year';
+    if (days >= 90) return '3 Months';
+    if (days >= 30) return 'Month';
+    return '${days.round()} Days';
+  }
+
   void generateCalendar() {
-    debugPrint('Generating calendar with ${stakingData.length} events...');
     final buffer = StringBuffer();
     buffer.writeln('BEGIN:VCALENDAR');
     buffer.writeln('VERSION:2.0');
     buffer.writeln('PRODID:-//Stake Reminder//EN');
+
     for (var item in stakingData) {
-      // Пропускаємо елементи без closeDate (щоб не генерувати пусті події)
       if (item.closeDate == null) continue;
       final dtStart = _formatDateForIcs(item.closeDate);
       buffer.writeln('BEGIN:VEVENT');
-      buffer.writeln('SUMMARY:${item.currency} staking ends');
+      buffer.writeln('SUMMARY:${item.platform} - ${item.planName} staking ends');
       buffer.writeln('DTSTART:$dtStart');
       buffer.writeln('DTEND:$dtStart');
       buffer.writeln('DESCRIPTION:Stake ends for ${item.currency}');
       buffer.writeln('END:VEVENT');
     }
+
     buffer.writeln('END:VCALENDAR');
     downloadFile('staking_calendar.ics', buffer.toString());
-    debugPrint('Calendar generation completed.');
   }
 
   String _formatDateForIcs(DateTime? date) {
@@ -256,6 +214,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
                       DataColumn(label: Text('Close Date')),
                       DataColumn(label: Text('Plan %')),
                       DataColumn(label: Text('Earn Amount')),
+                      DataColumn(label: Text('Plan Name')),
+                      DataColumn(label: Text('Platform')),
                     ],
                     rows: stakingData.map((item) {
                       return DataRow(cells: [
@@ -265,6 +225,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
                         DataCell(Text(item.closeDate?.toLocal().toString().split(' ').first ?? '')),
                         DataCell(Text(item.planPercent.toStringAsFixed(2))),
                         DataCell(Text(item.earnAmount.toStringAsFixed(2))),
+                        DataCell(Text(item.planName)),
+                        DataCell(Text(item.platform)),
                       ]);
                     }).toList(),
                   ),
