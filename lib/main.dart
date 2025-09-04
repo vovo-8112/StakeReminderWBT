@@ -93,10 +93,15 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
       try {
         final currency = row.length > 1 ? row[1].toString() : '';
         final openDate = row.length > 6 ? _parseDate(row[6]) : null;
-        final planPeriodSeconds = row.length > 8 ? _toDouble(row[8]) : 0.0;
-        final closeDate = (openDate != null && planPeriodSeconds > 0)
-            ? openDate.add(Duration(seconds: planPeriodSeconds.toInt()))
-            : null;
+
+        // <-- ВАЖЛИВО: planPeriod тут у хвилинах (43200 -> 30 днів)
+        final planPeriodMinutes = row.length > 4 ? _toDouble(row[4]) : 0.0;
+
+        DateTime? closeDate;
+        if (openDate != null && planPeriodMinutes > 0) {
+          closeDate = openDate.add(Duration(minutes: planPeriodMinutes.toInt()));
+        }
+
         final openAmount = row.length > 5 ? _toDouble(row[5]) : 0.0;
         final planPercent = row.length > 3 ? _toDouble(row[3]) : 0.0;
         final earnAmount = row.length > 9 ? _toDouble(row[9]) : 0.0;
@@ -193,6 +198,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     buffer.writeln('VERSION:2.0');
     buffer.writeln('PRODID:-//Stake Reminder//EN');
     for (var item in stakingData) {
+      // Пропускаємо елементи без closeDate (щоб не генерувати пусті події)
+      if (item.closeDate == null) continue;
       final dtStart = _formatDateForIcs(item.closeDate);
       buffer.writeln('BEGIN:VEVENT');
       buffer.writeln('SUMMARY:${item.currency} staking ends');
@@ -234,7 +241,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
           children: [
             ElevatedButton(
               onPressed: pickFile,
-              child: const Text('Вибрати XLSX або CSV'),
+              child: const Text('Вибрати CSV'),
             ),
             const SizedBox(height: 16),
             if (fileLoaded)
