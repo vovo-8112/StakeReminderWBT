@@ -142,7 +142,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
   }
 
   String _planName(double minutes) {
-    final days = minutes / 1440; // 1 день = 1440 хв
+    final days = minutes / 1440;
     if (days >= 360) return 'Year';
     if (days >= 180) return 'Half Year';
     if (days >= 90) return '3 Months';
@@ -186,6 +186,24 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     html.Url.revokeObjectUrl(url);
   }
 
+  // ----------------- Google Calendar -----------------
+  void openGoogleCalendar(StakeItem item) {
+    if (item.closeDate == null) return;
+
+    final start = _formatDateForGCal(item.closeDate!);
+    final end = _formatDateForGCal(item.closeDate!.add(const Duration(hours: 1)));
+    final url =
+        'https://calendar.google.com/calendar/render?action=TEMPLATE&text=${Uri.encodeComponent(item.platform + ' - ' + item.planName)}&dates=$start/$end&details=${Uri.encodeComponent('Stake ends for ${item.currency}')}';
+
+    html.window.open(url, '_blank');
+  }
+
+  String _formatDateForGCal(DateTime date) {
+    final utc = date.toUtc();
+    return '${utc.toIso8601String().replaceAll('-', '').replaceAll(':', '').split('.').first}Z';
+  }
+  // ---------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -216,6 +234,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
                       DataColumn(label: Text('Earn Amount')),
                       DataColumn(label: Text('Plan Name')),
                       DataColumn(label: Text('Platform')),
+                      DataColumn(label: Text('Google Calendar')),
                     ],
                     rows: stakingData.map((item) {
                       return DataRow(cells: [
@@ -227,6 +246,12 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
                         DataCell(Text(item.earnAmount.toStringAsFixed(2))),
                         DataCell(Text(item.planName)),
                         DataCell(Text(item.platform)),
+                        DataCell(
+                          ElevatedButton(
+                            onPressed: () => openGoogleCalendar(item),
+                            child: const Text('Add to Google Calendar'),
+                          ),
+                        ),
                       ]);
                     }).toList(),
                   ),
@@ -235,7 +260,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: fileLoaded ? generateCalendar : null,
-              child: const Text('Створити календар'),
+              child: const Text('Створити календар (.ics)'),
             ),
           ],
         ),
