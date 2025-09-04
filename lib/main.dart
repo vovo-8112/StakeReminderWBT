@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
-import 'package:excel/excel.dart';
 import 'package:csv/csv.dart';
 import 'dart:html' as html;
 
@@ -27,8 +26,8 @@ class MyApp extends StatelessWidget {
 class StakeItem {
   final String currency;
   final double openAmount;
-  final DateTime openDate;
-  final DateTime closeDate;
+  final DateTime? openDate;
+  final DateTime? closeDate;
   final double planPercent;
   final double earnAmount;
 
@@ -57,7 +56,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     debugPrint('Starting file picking...');
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['xlsx', 'csv'],
+      allowedExtensions: ['csv'],
       withData: true,
     );
 
@@ -68,9 +67,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
 
       debugPrint('File picked with extension: $ext');
 
-      if (ext == 'xlsx') {
-        readXlsx(bytes);
-      } else if (ext == 'csv') {
+      if (ext == 'csv') {
         readCsv(bytes);
       }
 
@@ -80,46 +77,6 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     } else {
       debugPrint('No file selected.');
     }
-  }
-
-  void readXlsx(Uint8List bytes) {
-    debugPrint('Starting XLSX parsing...');
-    final excel = Excel.decodeBytes(bytes);
-    List<StakeItem> temp = [];
-
-    for (var sheetName in excel.tables.keys) {
-      final table = excel.tables[sheetName]!;
-      for (int i = 1; i < table.rows.length; i++) { // пропускаємо заголовки
-        final row = table.rows[i];
-        if (row.isEmpty) continue;
-
-        try {
-          final currency = row.length > 1 ? row[1]?.value.toString() ?? '' : '';
-          final openDate = row.length > 6 ? _parseDate(row[6]?.value) : DateTime.now();
-          final closeDate = row.length > 7 ? _parseDate(row[7]?.value) : DateTime.now();
-          final openAmount = row.length > 5 ? _toDouble(row[5]?.value) : 0.0;
-          final planPercent = row.length > 3 ? _toDouble(row[3]?.value) : 0.0;
-          final earnAmount = row.length > 9 ? _toDouble(row[9]?.value) : 0.0;
-
-          temp.add(StakeItem(
-            currency: currency,
-            openAmount: openAmount,
-            openDate: openDate,
-            closeDate: closeDate,
-            planPercent: planPercent,
-            earnAmount: earnAmount,
-          ));
-        } catch (e) {
-          debugPrint('Skipping row $i due to error: $e');
-          continue;
-        }
-      }
-    }
-
-    setState(() {
-      stakingData = temp;
-    });
-    debugPrint('XLSX parsing completed. Parsed ${temp.length} items.');
   }
 
   void readCsv(Uint8List bytes) {
@@ -135,8 +92,11 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
 
       try {
         final currency = row.length > 1 ? row[1].toString() : '';
-        final openDate = row.length > 6 ? _parseDate(row[6]) : DateTime.now();
-        final closeDate = row.length > 7 ? _parseDate(row[7]) : DateTime.now();
+        final openDate = row.length > 6 ? _parseDate(row[6]) : null;
+        final planPeriodSeconds = row.length > 8 ? _toDouble(row[8]) : 0.0;
+        final closeDate = (openDate != null && planPeriodSeconds > 0)
+            ? openDate.add(Duration(seconds: planPeriodSeconds.toInt()))
+            : null;
         final openAmount = row.length > 5 ? _toDouble(row[5]) : 0.0;
         final planPercent = row.length > 3 ? _toDouble(row[3]) : 0.0;
         final earnAmount = row.length > 9 ? _toDouble(row[9]) : 0.0;
@@ -187,33 +147,43 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     return 0.0;
   }
 
-  DateTime _parseDate(dynamic value) {
-    if (value == null) {
-      debugPrint('_parseDate: null value, returning DateTime.now()');
-      return DateTime.now();
+  DateTime? _parseDate(dynamic value) {
+    if (value == null || value.toString().isEmpty) {
+      debugPrint('_parseDate: null or empty value, returning null');
+      return null;
     }
+
     if (value is DateTime) {
       debugPrint('_parseDate: DateTime value $value');
       return value;
     }
+
     if (value is String) {
-      final parsed = DateTime.tryParse(value);
+      // Заміна "UTC" на "T" і додавання "Z" наприкінці
+      String formatted = value.replaceAll('UTC', 'T').trim();
+      if (!formatted.endsWith('Z')) {
+        formatted += 'Z';
+      }
+      final parsed = DateTime.tryParse(formatted);
       if (parsed != null) {
         debugPrint('_parseDate: parsed string "$value" to $parsed');
         return parsed;
-      } else {
-        debugPrint('_parseDate: failed to parse string "$value", returning DateTime.now()');
-        return DateTime.now();
       }
+      debugPrint('_parseDate: failed to parse string "$value", returning null');
+      return null;
     }
-    if (value is double) {
+
+    if (value is num) {
+      // Іноді дата може бути у вигляді Excel-числа (дні з 1899-12-30)
       final excelEpoch = DateTime(1899, 12, 30);
-      final date = excelEpoch.add(Duration(days: value.toInt()));
-      debugPrint('_parseDate: parsed excel double $value to $date');
+      final days = value.toDouble();
+      final date = excelEpoch.add(Duration(days: days.floor()));
+      debugPrint('_parseDate: parsed numeric excel date $value to $date');
       return date;
     }
-    debugPrint('_parseDate: unknown type, returning DateTime.now()');
-    return DateTime.now();
+
+    debugPrint('_parseDate: unknown type, returning null');
+    return null;
   }
 
   void generateCalendar() {
@@ -236,7 +206,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     debugPrint('Calendar generation completed.');
   }
 
-  String _formatDateForIcs(DateTime date) {
+  String _formatDateForIcs(DateTime? date) {
+    if (date == null) return '';
     final utc = date.toUtc();
     return '${utc.toIso8601String().replaceAll('-', '').replaceAll(':', '').split('.').first}Z';
   }
@@ -283,8 +254,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
                       return DataRow(cells: [
                         DataCell(Text(item.currency)),
                         DataCell(Text(item.openAmount.toStringAsFixed(2))),
-                        DataCell(Text(item.openDate.toLocal().toString().split(' ').first)),
-                        DataCell(Text(item.closeDate.toLocal().toString().split(' ').first)),
+                        DataCell(Text(item.openDate?.toLocal().toString().split(' ').first ?? '')),
+                        DataCell(Text(item.closeDate?.toLocal().toString().split(' ').first ?? '')),
                         DataCell(Text(item.planPercent.toStringAsFixed(2))),
                         DataCell(Text(item.earnAmount.toStringAsFixed(2))),
                       ]);
