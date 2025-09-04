@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:csv/csv.dart';
 import 'dart:html' as html;
+import 'file_parser.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,8 +16,28 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Stake Reminder',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: const Color(0xFF121212),
+        colorScheme: ColorScheme.dark(
+          primary: Colors.deepPurpleAccent,
+          secondary: Colors.amberAccent,
+        ),
+        textTheme: const TextTheme(
+          bodyMedium: TextStyle(color: Colors.white70),
+          bodyLarge: TextStyle(color: Colors.white),
+          titleMedium: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.deepPurpleAccent,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            textStyle: const TextStyle(fontWeight: FontWeight.bold),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
       ),
       home: const StakeReminderPage(),
     );
@@ -59,7 +80,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
   Future<void> pickFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['csv'],
+      allowedExtensions: ['csv', 'xlsx'],
       withData: true,
     );
 
@@ -68,9 +89,8 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
       final bytes = file.bytes!;
       final ext = file.extension?.toLowerCase() ?? '';
 
-      if (ext == 'csv') {
-        readCsv(bytes);
-      }
+      final rows = await FileParser.parseFile(bytes, ext);
+      readCsvFromList(rows);
 
       setState(() {
         fileLoaded = true;
@@ -78,10 +98,7 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     }
   }
 
-  void readCsv(Uint8List bytes) {
-    final csvString = String.fromCharCodes(bytes);
-    final rows = CsvToListConverter().convert(csvString);
-
+  void readCsvFromList(List<List<String>> rows) {
     List<StakeItem> temp = [];
 
     for (int i = 1; i < rows.length; i++) {
@@ -186,7 +203,6 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     html.Url.revokeObjectUrl(url);
   }
 
-  // ----------------- Google Calendar -----------------
   void openGoogleCalendar(StakeItem item) {
     if (item.closeDate == null) return;
 
@@ -202,65 +218,97 @@ class _StakeReminderPageState extends State<StakeReminderPage> {
     final utc = date.toUtc();
     return '${utc.toIso8601String().replaceAll('-', '').replaceAll(':', '').split('.').first}Z';
   }
-  // ---------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Stake Reminder'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        backgroundColor: Colors.deepPurpleAccent,
+        centerTitle: true,
+        elevation: 4,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: pickFile,
-              child: const Text('Вибрати CSV'),
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Вибрати CSV / XLSX'),
             ),
             const SizedBox(height: 16),
             if (fileLoaded)
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.vertical,
-                  child: DataTable(
-                    columns: const [
-                      DataColumn(label: Text('Currency')),
-                      DataColumn(label: Text('Open Amount')),
-                      DataColumn(label: Text('Open Date')),
-                      DataColumn(label: Text('Close Date')),
-                      DataColumn(label: Text('Plan %')),
-                      DataColumn(label: Text('Earn Amount')),
-                      DataColumn(label: Text('Plan Name')),
-                      DataColumn(label: Text('Platform')),
-                      DataColumn(label: Text('Google Calendar')),
-                    ],
-                    rows: stakingData.map((item) {
-                      return DataRow(cells: [
-                        DataCell(Text(item.currency)),
-                        DataCell(Text(item.openAmount.toStringAsFixed(2))),
-                        DataCell(Text(item.openDate?.toLocal().toString().split(' ').first ?? '')),
-                        DataCell(Text(item.closeDate?.toLocal().toString().split(' ').first ?? '')),
-                        DataCell(Text(item.planPercent.toStringAsFixed(2))),
-                        DataCell(Text(item.earnAmount.toStringAsFixed(2))),
-                        DataCell(Text(item.planName)),
-                        DataCell(Text(item.platform)),
-                        DataCell(
-                          ElevatedButton(
-                            onPressed: () => openGoogleCalendar(item),
-                            child: const Text('Add to Google Calendar'),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return Align(
+                      alignment: Alignment.topCenter,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.vertical,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                            child: DataTable(
+                              headingRowColor: MaterialStateProperty.all(Colors.deepPurple),
+                              headingTextStyle: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              dataRowColor: MaterialStateProperty.resolveWith<Color?>(
+                                (Set<MaterialState> states) {
+                                  if (states.contains(MaterialState.selected)) {
+                                    return Colors.deepPurpleAccent.withOpacity(0.3);
+                                  }
+                                  return null;
+                                },
+                              ),
+                              columns: const [
+                                DataColumn(label: Center(child: Text('Currency'))),
+                                DataColumn(label: Center(child: Text('Open Amount'))),
+                                DataColumn(label: Center(child: Text('Open Date'))),
+                                DataColumn(label: Center(child: Text('Close Date'))),
+                                DataColumn(label: Center(child: Text('Plan %'))),
+                                DataColumn(label: Center(child: Text('Earn Amount'))),
+                                DataColumn(label: Center(child: Text('Plan Name'))),
+                                DataColumn(label: Center(child: Text('Platform'))),
+                                DataColumn(label: Center(child: Text('Google Calendar'))),
+                              ],
+                              rows: stakingData.map((item) {
+                                return DataRow(cells: [
+                                  DataCell(Center(child: Text(item.currency))),
+                                  DataCell(Center(child: Text(item.openAmount.toStringAsFixed(2)))),
+                                  DataCell(Center(child: Text(item.openDate?.toLocal().toString().split(' ').first ?? ''))),
+                                  DataCell(Center(child: Text(item.closeDate?.toLocal().toString().split(' ').first ?? ''))),
+                                  DataCell(Center(child: Text(item.planPercent.toStringAsFixed(2)))),
+                                  DataCell(Center(child: Text(item.earnAmount.toStringAsFixed(2)))),
+                                  DataCell(Center(child: Text(item.planName))),
+                                  DataCell(Center(child: Text(item.platform))),
+                                  DataCell(
+                                    Center(
+                                      child: ElevatedButton(
+                                        onPressed: () => openGoogleCalendar(item),
+                                        child: const Text('Add'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.amberAccent,
+                                          foregroundColor: Colors.black,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ]);
+                              }).toList(),
+                            ),
                           ),
                         ),
-                      ]);
-                    }).toList(),
-                  ),
+                      ),
+                    );
+                  },
                 ),
               ),
             const SizedBox(height: 16),
-            ElevatedButton(
+            ElevatedButton.icon(
               onPressed: fileLoaded ? generateCalendar : null,
-              child: const Text('Створити календар (.ics)'),
+              icon: const Icon(Icons.calendar_month),
+              label: const Text('Створити календар (.ics)'),
             ),
           ],
         ),
