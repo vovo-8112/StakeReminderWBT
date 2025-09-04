@@ -1,4 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:excel/excel.dart';
+import 'package:csv/csv.dart';
+import 'dart:html' as html;
 
 void main() {
   runApp(const MyApp());
@@ -7,116 +12,294 @@ void main() {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Stake Reminder',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const StakeReminderPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class StakeItem {
+  final String currency;
+  final double openAmount;
+  final DateTime openDate;
+  final DateTime closeDate;
+  final double planPercent;
+  final double earnAmount;
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
-  @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  StakeItem({
+    required this.currency,
+    required this.openAmount,
+    required this.openDate,
+    required this.closeDate,
+    required this.planPercent,
+    required this.earnAmount,
+  });
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class StakeReminderPage extends StatefulWidget {
+  const StakeReminderPage({super.key});
 
-  void _incrementCounter() {
+  @override
+  State<StakeReminderPage> createState() => _StakeReminderPageState();
+}
+
+class _StakeReminderPageState extends State<StakeReminderPage> {
+  List<StakeItem> stakingData = [];
+  bool fileLoaded = false;
+
+  Future<void> pickFile() async {
+    debugPrint('Starting file picking...');
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx', 'csv'],
+      withData: true,
+    );
+
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.first;
+      final bytes = file.bytes!;
+      final ext = file.extension?.toLowerCase() ?? '';
+
+      debugPrint('File picked with extension: $ext');
+
+      if (ext == 'xlsx') {
+        readXlsx(bytes);
+      } else if (ext == 'csv') {
+        readCsv(bytes);
+      }
+
+      setState(() {
+        fileLoaded = true;
+      });
+    } else {
+      debugPrint('No file selected.');
+    }
+  }
+
+  void readXlsx(Uint8List bytes) {
+    debugPrint('Starting XLSX parsing...');
+    final excel = Excel.decodeBytes(bytes);
+    List<StakeItem> temp = [];
+
+    for (var sheetName in excel.tables.keys) {
+      final table = excel.tables[sheetName]!;
+      for (int i = 1; i < table.rows.length; i++) { // пропускаємо заголовки
+        final row = table.rows[i];
+        if (row.isEmpty) continue;
+
+        try {
+          final currency = row.length > 1 ? row[1]?.value.toString() ?? '' : '';
+          final openDate = row.length > 6 ? _parseDate(row[6]?.value) : DateTime.now();
+          final closeDate = row.length > 7 ? _parseDate(row[7]?.value) : DateTime.now();
+          final openAmount = row.length > 5 ? _toDouble(row[5]?.value) : 0.0;
+          final planPercent = row.length > 3 ? _toDouble(row[3]?.value) : 0.0;
+          final earnAmount = row.length > 9 ? _toDouble(row[9]?.value) : 0.0;
+
+          temp.add(StakeItem(
+            currency: currency,
+            openAmount: openAmount,
+            openDate: openDate,
+            closeDate: closeDate,
+            planPercent: planPercent,
+            earnAmount: earnAmount,
+          ));
+        } catch (e) {
+          debugPrint('Skipping row $i due to error: $e');
+          continue;
+        }
+      }
+    }
+
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      stakingData = temp;
     });
+    debugPrint('XLSX parsing completed. Parsed ${temp.length} items.');
+  }
+
+  void readCsv(Uint8List bytes) {
+    debugPrint('Starting CSV parsing...');
+    final csvString = String.fromCharCodes(bytes);
+    final rows = CsvToListConverter().convert(csvString);
+
+    List<StakeItem> temp = [];
+
+    for (int i = 1; i < rows.length; i++) { // пропускаємо заголовки
+      final row = rows[i];
+      if (row.isEmpty) continue;
+
+      try {
+        final currency = row.length > 1 ? row[1].toString() : '';
+        final openDate = row.length > 6 ? _parseDate(row[6]) : DateTime.now();
+        final closeDate = row.length > 7 ? _parseDate(row[7]) : DateTime.now();
+        final openAmount = row.length > 5 ? _toDouble(row[5]) : 0.0;
+        final planPercent = row.length > 3 ? _toDouble(row[3]) : 0.0;
+        final earnAmount = row.length > 9 ? _toDouble(row[9]) : 0.0;
+
+        temp.add(StakeItem(
+          currency: currency,
+          openAmount: openAmount,
+          openDate: openDate,
+          closeDate: closeDate,
+          planPercent: planPercent,
+          earnAmount: earnAmount,
+        ));
+      } catch (e) {
+        debugPrint('Skipping row $i due to error: $e');
+        continue;
+      }
+    }
+
+    setState(() {
+      stakingData = temp;
+    });
+    debugPrint('CSV parsing completed. Parsed ${temp.length} items.');
+  }
+
+  double _toDouble(dynamic value) {
+    if (value == null) {
+      debugPrint('_toDouble: null value, returning 0.0');
+      return 0.0;
+    }
+    if (value is double) {
+      debugPrint('_toDouble: double value $value');
+      return value;
+    }
+    if (value is int) {
+      debugPrint('_toDouble: int value $value');
+      return value.toDouble();
+    }
+    if (value is num) {
+      debugPrint('_toDouble: num value $value');
+      return value.toDouble();
+    }
+    if (value is String) {
+      final parsed = double.tryParse(value) ?? 0.0;
+      debugPrint('_toDouble: parsed string "$value" to $parsed');
+      return parsed;
+    }
+    debugPrint('_toDouble: unknown type, returning 0.0');
+    return 0.0;
+  }
+
+  DateTime _parseDate(dynamic value) {
+    if (value == null) {
+      debugPrint('_parseDate: null value, returning DateTime.now()');
+      return DateTime.now();
+    }
+    if (value is DateTime) {
+      debugPrint('_parseDate: DateTime value $value');
+      return value;
+    }
+    if (value is String) {
+      final parsed = DateTime.tryParse(value);
+      if (parsed != null) {
+        debugPrint('_parseDate: parsed string "$value" to $parsed');
+        return parsed;
+      } else {
+        debugPrint('_parseDate: failed to parse string "$value", returning DateTime.now()');
+        return DateTime.now();
+      }
+    }
+    if (value is double) {
+      final excelEpoch = DateTime(1899, 12, 30);
+      final date = excelEpoch.add(Duration(days: value.toInt()));
+      debugPrint('_parseDate: parsed excel double $value to $date');
+      return date;
+    }
+    debugPrint('_parseDate: unknown type, returning DateTime.now()');
+    return DateTime.now();
+  }
+
+  void generateCalendar() {
+    debugPrint('Generating calendar with ${stakingData.length} events...');
+    final buffer = StringBuffer();
+    buffer.writeln('BEGIN:VCALENDAR');
+    buffer.writeln('VERSION:2.0');
+    buffer.writeln('PRODID:-//Stake Reminder//EN');
+    for (var item in stakingData) {
+      final dtStart = _formatDateForIcs(item.closeDate);
+      buffer.writeln('BEGIN:VEVENT');
+      buffer.writeln('SUMMARY:${item.currency} staking ends');
+      buffer.writeln('DTSTART:$dtStart');
+      buffer.writeln('DTEND:$dtStart');
+      buffer.writeln('DESCRIPTION:Stake ends for ${item.currency}');
+      buffer.writeln('END:VEVENT');
+    }
+    buffer.writeln('END:VCALENDAR');
+    downloadFile('staking_calendar.ics', buffer.toString());
+    debugPrint('Calendar generation completed.');
+  }
+
+  String _formatDateForIcs(DateTime date) {
+    final utc = date.toUtc();
+    return '${utc.toIso8601String().replaceAll('-', '').replaceAll(':', '').split('.').first}Z';
+  }
+
+  void downloadFile(String fileName, String content) {
+    final blob = html.Blob([content], 'text/calendar;charset=utf-8');
+    final url = html.Url.createObjectUrlFromBlob(blob);
+    final anchor = html.AnchorElement(href: url)
+      ..setAttribute('download', fileName)
+      ..click();
+    html.Url.revokeObjectUrl(url);
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
     return Scaffold(
       appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
+        title: const Text('Stake Reminder'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+          children: [
+            ElevatedButton(
+              onPressed: pickFile,
+              child: const Text('Вибрати XLSX або CSV'),
+            ),
+            const SizedBox(height: 16),
+            if (fileLoaded)
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.vertical,
+                  child: DataTable(
+                    columns: const [
+                      DataColumn(label: Text('Currency')),
+                      DataColumn(label: Text('Open Amount')),
+                      DataColumn(label: Text('Open Date')),
+                      DataColumn(label: Text('Close Date')),
+                      DataColumn(label: Text('Plan %')),
+                      DataColumn(label: Text('Earn Amount')),
+                    ],
+                    rows: stakingData.map((item) {
+                      return DataRow(cells: [
+                        DataCell(Text(item.currency)),
+                        DataCell(Text(item.openAmount.toStringAsFixed(2))),
+                        DataCell(Text(item.openDate.toLocal().toString().split(' ').first)),
+                        DataCell(Text(item.closeDate.toLocal().toString().split(' ').first)),
+                        DataCell(Text(item.planPercent.toStringAsFixed(2))),
+                        DataCell(Text(item.earnAmount.toStringAsFixed(2))),
+                      ]);
+                    }).toList(),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: fileLoaded ? generateCalendar : null,
+              child: const Text('Створити календар'),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
